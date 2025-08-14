@@ -1,6 +1,13 @@
 // Hybrid Cryptographic System - Complete Implementation
 // Hill Cipher + SDES + Steganography
 
+// ===== GLOBAL STATE =====
+let currentStep = 1;
+let hillCipherResult = null;
+let sdesResult = null;
+let steganographyResult = null;
+let originalImageData = null;
+
 // ===== CRYPTOGRAPHIC UTILITY FUNCTIONS =====
 
 // Text to Binary Conversion
@@ -388,720 +395,782 @@ class LSBSteganography {
         );
         
         // Convert message to binary and add delimiter
-        const binaryMessage = this.textToBinary(message) + '1111111111111110'; // 16-bit delimiter
+        const messageBinary = this.textToBinary(message);
+        const delimiter = '1111111111111110'; // 16-bit delimiter
+        const fullMessage = messageBinary + delimiter;
         
-        if (binaryMessage.length > originalImageData.data.length / 4) {
-            throw new Error('Message too large for image capacity');
+        console.log('Hiding message:', message);
+        console.log('Message binary length:', messageBinary.length);
+        console.log('Total capacity needed:', fullMessage.length);
+        
+        // Check if image has enough capacity
+        const maxCapacity = Math.floor((originalImageData.data.length / 4) * 3); // RGB channels only
+        if (fullMessage.length > maxCapacity) {
+            throw new Error(`Image too small. Need ${fullMessage.length} bits, but image can only hold ${maxCapacity} bits.`);
         }
         
-        let pixelsModified = 0;
-        let bitIndex = 0;
-        
-        // Hide message in LSB of RGB channels
-        for (let i = 0; i < modifiedImageData.data.length && bitIndex < binaryMessage.length; i += 4) {
-            // Skip alpha channel, only modify RGB
-            for (let channel = 0; channel < 3 && bitIndex < binaryMessage.length; channel++) {
-                const pixelIndex = i + channel;
-                const originalValue = modifiedImageData.data[pixelIndex];
-                const messageBit = parseInt(binaryMessage[bitIndex]);
+        // Hide message in LSBs
+        let messageIndex = 0;
+        for (let i = 0; i < modifiedImageData.data.length && messageIndex < fullMessage.length; i += 4) {
+            // Modify R, G, B channels (skip Alpha)
+            for (let j = 0; j < 3 && messageIndex < fullMessage.length; j++) {
+                const pixelValue = modifiedImageData.data[i + j];
+                const messageBit = parseInt(fullMessage[messageIndex]);
                 
                 // Clear LSB and set to message bit
-                const newValue = (originalValue & 0xFE) | messageBit;
-                
-                if (newValue !== originalValue) {
-                    pixelsModified++;
-                }
-                
-                modifiedImageData.data[pixelIndex] = newValue;
-                bitIndex++;
+                modifiedImageData.data[i + j] = (pixelValue & 0xFE) | messageBit;
+                messageIndex++;
             }
         }
         
         // Put modified image data back to canvas
         this.ctx.putImageData(modifiedImageData, 0, 0);
-        const stegoImageData = this.canvasToImageData();
         
-        const capacityUsed = (binaryMessage.length / (originalImageData.data.length / 4 * 3)) * 100;
+        // Calculate PSNR
         const psnr = this.calculatePSNR(originalImageData, modifiedImageData);
         
         return {
-            originalImageData: imageData,
-            stegoImageData,
-            hiddenMessage: message,
-            pixelsModified,
-            capacityUsed,
-            psnr
+            originalImage: imageData,
+            stegoImage: this.canvasToImageData(),
+            message: message,
+            messageBinary: messageBinary,
+            capacity: maxCapacity,
+            used: fullMessage.length,
+            psnr: psnr,
+            imageSize: {
+                width: originalImageData.width,
+                height: originalImageData.height
+            }
         };
     }
     
-    async extractMessage(stegoImageData) {
-        const imageData = await this.imageDataToCanvas(stegoImageData);
-        let binaryMessage = '';
+    async extractMessage(imageData) {
+        const stegoImageData = await this.imageDataToCanvas(imageData);
+        
+        // Extract bits from LSBs
+        let extractedBinary = '';
         const delimiter = '1111111111111110';
         
-        // Extract bits from LSB of RGB channels
-        for (let i = 0; i < imageData.data.length; i += 4) {
-            for (let channel = 0; channel < 3; channel++) {
-                const pixelValue = imageData.data[i + channel];
-                const lsb = pixelValue & 1;
-                binaryMessage += lsb.toString();
+        for (let i = 0; i < stegoImageData.data.length; i += 4) {
+            // Extract from R, G, B channels
+            for (let j = 0; j < 3; j++) {
+                const lsb = stegoImageData.data[i + j] & 1;
+                extractedBinary += lsb.toString();
                 
                 // Check for delimiter
-                if (binaryMessage.endsWith(delimiter)) {
-                    const messageWithoutDelimiter = binaryMessage.slice(0, -delimiter.length);
-                    return this.binaryToText(messageWithoutDelimiter);
+                if (extractedBinary.length >= delimiter.length) {
+                    const lastBits = extractedBinary.slice(-delimiter.length);
+                    if (lastBits === delimiter) {
+                        // Found delimiter, extract message
+                        const messageBinary = extractedBinary.slice(0, -delimiter.length);
+                        return this.binaryToText(messageBinary);
+                    }
                 }
             }
         }
         
-        throw new Error('No hidden message found or message corrupted');
+        throw new Error('No hidden message found or delimiter not detected');
     }
 }
 
-// ===== GLOBAL INSTANCES =====
-const hillCipher = new HillCipher();
-const sdes = new SDES();
-const lsbSteganography = new LSBSteganography();
+// ===== UI MANAGEMENT =====
 
-// ===== GLOBAL STATE MANAGEMENT =====
-let currentStep = 1;
-let currentDecryptStep = 5;
-let hillResult = null;
-let sdesResult = null;
-let steganographyResult = null;
-let selectedImage = null;
-
-// Step Configuration
-const steps = [
-    "Hill Cipher\nEncryption",
-    "SDES\nEncryption", 
-    "Hide in\nImage",
-    "Stego\nImage",
-    "Extract\nMessage",
-    "SDES\nDecryption",
-    "Hill Cipher\nDecryption",
-    "Original\nText"
-];
-
-const decryptionSteps = [
-    {
-        number: 5,
-        title: "Extract from Image",
-        description: "Upload steganographic image to extract hidden message",
-        icon: "upload"
-    },
-    {
-        number: 6,
-        title: "SDES Decryption", 
-        description: "Decrypt 8-bit blocks using SDES algorithm",
-        icon: "unlock"
-    },
-    {
-        number: 7,
-        title: "Hill Decryption",
-        description: "Apply inverse Hill cipher transformation", 
-        icon: "key"
-    },
-    {
-        number: 8,
-        title: "Original Text",
-        description: "Recovered plaintext message",
-        icon: "file-text"
-    }
-];
-
-// Initialize Application
+// Initialize UI on page load
 document.addEventListener('DOMContentLoaded', function() {
-    initializeStepIndicator();
-    initializeMatrixInputs();
-    initializeBinaryKeyInputs();
-    initializeImageUpload();
-    initializeDecryptionSteps();
-    updateUI();
+    initializeUI();
+    setupEventListeners();
+    updateStepIndicator();
+    validateMatrix();
 });
 
-// Step Indicator Functions
-function initializeStepIndicator() {
+function initializeUI() {
+    // Generate step indicator
     const stepIndicator = document.getElementById('stepIndicator');
+    const steps = [
+        { number: 1, title: 'Hill Cipher', description: 'Matrix Encryption' },
+        { number: 2, title: 'Binary Conversion', description: 'Text to Binary' },
+        { number: 3, title: 'SDES Encryption', description: 'Block Cipher' },
+        { number: 4, title: 'Binary Processing', description: 'Bit Manipulation' },
+        { number: 5, title: 'Image Upload', description: 'Cover Selection' },
+        { number: 6, title: 'Steganography', description: 'LSB Embedding' },
+        { number: 7, title: 'Verification', description: 'Quality Check' },
+        { number: 8, title: 'Complete', description: 'Export Results' }
+    ];
     
-    steps.forEach((step, index) => {
-        const stepNumber = index + 1;
-        const isActive = stepNumber === currentStep;
-        const isCompleted = stepNumber < currentStep;
-        
-        const stepItem = document.createElement('div');
-        stepItem.className = 'step-item';
-        
-        stepItem.innerHTML = `
-            <div class="step-circle ${isCompleted ? 'completed' : isActive ? 'active' : 'pending'}">
-                ${stepNumber}
-            </div>
-            <span class="step-label">${step}</span>
-        `;
-        
-        stepIndicator.appendChild(stepItem);
-        
-        if (index < steps.length - 1) {
-            const connector = document.createElement('div');
-            connector.className = `step-connector ${stepNumber < currentStep ? 'completed' : 'pending'}`;
-            stepIndicator.appendChild(connector);
-        }
-    });
+    stepIndicator.innerHTML = steps.map(step => `
+        <div class="step-item ${step.number === 1 ? 'active' : ''}" data-step="${step.number}">
+            <div class="step-number">${step.number}</div>
+            <div class="step-title">${step.title}</div>
+            <div class="step-desc">${step.description}</div>
+        </div>
+    `).join('');
     
-    updateProgressBar();
+    // Set initial progress
+    updateProgress(0);
 }
 
-function updateStepIndicator() {
-    const stepItems = document.querySelectorAll('.step-item');
-    const connectors = document.querySelectorAll('.step-connector');
-    
-    stepItems.forEach((item, index) => {
-        const stepNumber = index + 1;
-        const circle = item.querySelector('.step-circle');
-        
-        circle.className = 'step-circle ' + 
-            (stepNumber < currentStep ? 'completed' : 
-             stepNumber === currentStep ? 'active' : 'pending');
-    });
-    
-    connectors.forEach((connector, index) => {
-        const stepNumber = index + 1;
-        connector.className = `step-connector ${stepNumber < currentStep ? 'completed' : 'pending'}`;
-    });
-    
-    updateProgressBar();
-    updateStepDescription();
-}
-
-function updateProgressBar() {
-    const progressFill = document.getElementById('progressFill');
-    const progressPercentage = (currentStep / 8) * 100;
-    progressFill.style.width = `${progressPercentage}%`;
-}
-
-function updateStepDescription() {
-    const stepDescription = document.getElementById('stepDescription');
-    stepDescription.textContent = `Step ${currentStep} of 8 - ${steps[currentStep - 1].replace('\n', ' ')}`;
-}
-
-// Matrix Input Functions
-function initializeMatrixInputs() {
+function setupEventListeners() {
+    // Matrix input validation
     const matrixInputs = document.querySelectorAll('.matrix-input');
     matrixInputs.forEach(input => {
         input.addEventListener('input', validateMatrix);
     });
-    validateMatrix();
-}
-
-function getMatrixValues() {
-    return [
-        [parseInt(document.getElementById('matrix00').value) || 0, parseInt(document.getElementById('matrix01').value) || 0],
-        [parseInt(document.getElementById('matrix10').value) || 0, parseInt(document.getElementById('matrix11').value) || 0]
-    ];
-}
-
-function validateMatrix() {
-    const matrix = getMatrixValues();
-    const determinant = matrixDeterminant2x2(matrix);
-    const modDeterminant = mod(determinant, 26);
-    const isValid = validateMatrix2x2(matrix);
     
-    document.getElementById('matrixDeterminant').textContent = 
-        `Determinant: ${determinant} (mod 26: ${modDeterminant})`;
-    
-    const validation = document.getElementById('matrixValidation');
-    validation.textContent = isValid ? 'Valid' : 'Invalid';
-    validation.className = `badge ${isValid ? 'valid' : 'invalid'}`;
-    
-    const encryptBtn = document.getElementById('hillEncryptBtn');
-    const plainText = document.getElementById('plainText').value.trim();
-    encryptBtn.disabled = !isValid || !plainText;
-}
-
-// Binary Key Input Functions
-function initializeBinaryKeyInputs() {
+    // Binary key input validation
     const bitInputs = document.querySelectorAll('.bit-input');
-    bitInputs.forEach(input => {
-        input.addEventListener('input', function() {
-            if (!/^[01]?$/.test(this.value)) {
-                this.value = this.value.slice(-1).replace(/[^01]/, '0');
+    bitInputs.forEach((input, index) => {
+        input.addEventListener('input', function(e) {
+            // Only allow 0 and 1
+            if (e.target.value !== '0' && e.target.value !== '1') {
+                e.target.value = '';
             }
             validateSDESKey();
         });
+        
+        // Auto-focus next input
+        input.addEventListener('input', function() {
+            if (this.value && index < bitInputs.length - 1) {
+                bitInputs[index + 1].focus();
+            }
+        });
     });
+    
+    // File upload handling
+    const fileInput = document.getElementById('imageInput');
+    const dropZone = document.getElementById('fileDropZone');
+    const dropZoneContent = document.getElementById('dropZoneContent');
+    
+    fileInput.addEventListener('change', handleFileSelect);
+    
+    dropZone.addEventListener('click', () => fileInput.click());
+    
+    dropZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.classList.add('dragover');
+    });
+    
+    dropZone.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+    });
+    
+    dropZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileSelect({ target: { files: files } });
+        }
+    });
+}
+
+function updateStepIndicator() {
+    const stepItems = document.querySelectorAll('.step-item');
+    const stepDescription = document.getElementById('stepDescription');
+    
+    stepItems.forEach((item, index) => {
+        item.classList.remove('active', 'completed');
+        if (index + 1 < currentStep) {
+            item.classList.add('completed');
+        } else if (index + 1 === currentStep) {
+            item.classList.add('active');
+        }
+    });
+    
+    // Update progress description
+    const descriptions = [
+        'Step 1 of 8 - Hill Cipher Encryption',
+        'Step 2 of 8 - Binary Conversion',
+        'Step 3 of 8 - SDES Encryption',
+        'Step 4 of 8 - Binary Processing',
+        'Step 5 of 8 - Image Upload',
+        'Step 6 of 8 - Steganography',
+        'Step 7 of 8 - Verification',
+        'Step 8 of 8 - Process Complete'
+    ];
+    
+    if (stepDescription) {
+        stepDescription.textContent = descriptions[currentStep - 1] || descriptions[0];
+    }
+    
+    updateProgress((currentStep - 1) / 7 * 100);
+}
+
+function updateProgress(percentage) {
+    const progressFill = document.getElementById('progressFill');
+    if (progressFill) {
+        progressFill.style.width = `${percentage}%`;
+    }
+}
+
+function validateMatrix() {
+    const matrix = getKeyMatrix();
+    const det = matrixDeterminant2x2(matrix);
+    const isValid = validateMatrix2x2(matrix, 26);
+    
+    const determinantSpan = document.getElementById('matrixDeterminant');
+    const validationBadge = document.getElementById('matrixValidation');
+    
+    if (determinantSpan) {
+        determinantSpan.textContent = `Determinant: ${det} (mod 26: ${mod(det, 26)})`;
+    }
+    
+    if (validationBadge) {
+        validationBadge.textContent = isValid ? 'Valid' : 'Invalid';
+        validationBadge.className = `badge ${isValid ? 'valid' : 'invalid'} animated-badge`;
+    }
+    
+    // Enable/disable Hill cipher button
+    const hillBtn = document.getElementById('hillEncryptBtn');
+    if (hillBtn) {
+        hillBtn.disabled = !isValid || !document.getElementById('plainText').value.trim();
+    }
+    
+    return isValid;
+}
+
+function validateSDESKey() {
+    const bitInputs = document.querySelectorAll('.bit-input');
+    let isValid = true;
+    
+    bitInputs.forEach(input => {
+        if (input.value !== '0' && input.value !== '1') {
+            isValid = false;
+        }
+    });
+    
+    return isValid;
+}
+
+function getKeyMatrix() {
+    return [
+        [
+            parseInt(document.getElementById('matrix00').value) || 0,
+            parseInt(document.getElementById('matrix01').value) || 0
+        ],
+        [
+            parseInt(document.getElementById('matrix10').value) || 0,
+            parseInt(document.getElementById('matrix11').value) || 0
+        ]
+    ];
 }
 
 function getSDESKey() {
     const bitInputs = document.querySelectorAll('.bit-input');
-    return Array.from(bitInputs).map(input => input.value || '0').join('');
+    return Array.from(bitInputs).map(input => input.value).join('');
 }
 
-function validateSDESKey() {
-    const key = getSDESKey();
-    const isValid = key.length === 10 && /^[01]+$/.test(key);
-    
-    const sdesBtn = document.getElementById('sdesEncryptBtn');
-    sdesBtn.disabled = !isValid || !hillResult;
-}
+// ===== ENCRYPTION FUNCTIONS =====
 
-// Image Upload Functions
-function initializeImageUpload() {
-    const fileDropZone = document.getElementById('fileDropZone');
-    const imageInput = document.getElementById('imageInput');
-    const dropZoneContent = document.getElementById('dropZoneContent');
-    
-    fileDropZone.addEventListener('click', () => imageInput.click());
-    fileDropZone.addEventListener('dragover', handleDragOver);
-    fileDropZone.addEventListener('drop', handleDrop);
-    imageInput.addEventListener('change', handleFileSelect);
-}
-
-function handleDragOver(e) {
-    e.preventDefault();
-    e.currentTarget.classList.add('dragover');
-}
-
-function handleDrop(e) {
-    e.preventDefault();
-    e.currentTarget.classList.remove('dragover');
-    
-    const files = Array.from(e.dataTransfer.files);
-    if (files.length > 0) {
-        handleFile(files[0]);
-    }
-}
-
-function handleFileSelect(e) {
-    const files = e.target.files;
-    if (files && files.length > 0) {
-        handleFile(files[0]);
-    }
-}
-
-function handleFile(file) {
-    if (!file.type.startsWith('image/')) {
-        alert('Please select a valid image file');
-        return;
-    }
-
-    if (file.size > 10 * 1024 * 1024) { // 10MB limit
-        alert('File size must be less than 10MB');
-        return;
-    }
-
-    selectedImage = file;
-    
-    const reader = new FileReader();
-    reader.onload = function(e) {
-        displayImagePreview(e.target.result, file.name);
-        updateImageUploadUI();
-    };
-    reader.readAsDataURL(file);
-}
-
-function displayImagePreview(imageSrc, fileName) {
-    const dropZoneContent = document.getElementById('dropZoneContent');
-    dropZoneContent.innerHTML = `
-        <img src="${imageSrc}" alt="Selected cover image" style="max-height: 8rem; border-radius: 0.25rem;">
-        <p style="margin-top: 0.5rem; font-size: 0.875rem;">${fileName}</p>
-        <span class="badge secondary">Image loaded</span>
-    `;
-    
-    // Update original image preview
-    const originalImage = document.getElementById('originalImage');
-    originalImage.innerHTML = `<img src="${imageSrc}" alt="Original">`;
-}
-
-function updateImageUploadUI() {
-    const steganographyBtn = document.getElementById('steganographyBtn');
-    steganographyBtn.disabled = !selectedImage || !sdesResult;
-}
-
-// Decryption Steps Functions
-function initializeDecryptionSteps() {
-    const decryptionStepsContainer = document.getElementById('decryptionSteps');
-    
-    decryptionSteps.forEach(step => {
-        const stepElement = document.createElement('div');
-        stepElement.className = 'decrypt-step';
-        stepElement.id = `decrypt-step-${step.number}`;
-        
-        stepElement.innerHTML = `
-            <div class="decrypt-step-header">
-                <div class="decrypt-step-number" id="decrypt-number-${step.number}">${step.number}</div>
-                <h4>${step.title}</h4>
-            </div>
-            <p>${step.description}</p>
-            <div class="decrypt-result" id="decrypt-result-${step.number}">
-                ${step.number === 8 ? 'Awaiting...' : 
-                  step.number === currentDecryptStep ? 
-                    `<button class="btn btn-primary" onclick="executeDecryptStep(${step.number})">
-                        Step ${step.number}
-                    </button>` : 
-                  'Awaiting...'}
-            </div>
-        `;
-        
-        decryptionStepsContainer.appendChild(stepElement);
-    });
-}
-
-// Encryption Functions
-async function encryptHillCipher() {
-    const plainText = document.getElementById('plainText').value.trim();
-    const matrix = getMatrixValues();
-    
-    if (!plainText || !validateMatrix2x2(matrix)) return;
-    
-    const hillEncryptBtn = document.getElementById('hillEncryptBtn');
-    hillEncryptBtn.disabled = true;
-    hillEncryptBtn.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12a9 9 0 11-6.219-8.56"/>
-        </svg>
-        Encrypting...
-    `;
-    
+function encryptHillCipher() {
     try {
-        hillResult = hillCipher.encrypt(plainText, matrix);
+        const plainText = document.getElementById('plainText').value.trim();
+        if (!plainText) {
+            showNotification('Please enter a message to encrypt', 'error');
+            return;
+        }
+        
+        const keyMatrix = getKeyMatrix();
+        if (!validateMatrix2x2(keyMatrix, 26)) {
+            showNotification('Invalid key matrix. Please check your matrix values.', 'error');
+            return;
+        }
+        
+        const hillCipher = new HillCipher();
+        hillCipherResult = hillCipher.encrypt(plainText, keyMatrix);
+        
+        console.log('Hill Cipher Result:', hillCipherResult);
+        
+        // Display result
+        displayHillResult(hillCipherResult);
+        
+        // Enable next step
+        enableSDES();
         currentStep = 2;
-        
-        displayHillResults();
-        enableSDESCard();
         updateStepIndicator();
-        updateUI();
+        updateProcessFlow('hill', 'completed');
+        updateProcessFlow('sdes', 'active');
+        
+        showNotification('Hill Cipher encryption completed successfully!', 'success');
         
     } catch (error) {
-        alert('Hill cipher encryption failed: ' + error.message);
-    } finally {
-        hillEncryptBtn.disabled = false;
-        hillEncryptBtn.innerHTML = `
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-                <path d="m7 11V7a5 5 0 0 1 10 0v4"/>
-            </svg>
-            Encrypt with Hill Cipher
-        `;
+        console.error('Hill Cipher Error:', error);
+        showNotification(`Hill Cipher Error: ${error.message}`, 'error');
     }
 }
 
-async function encryptSDES() {
-    if (!hillResult) return;
-    
-    const sdesKey = getSDESKey();
-    const sdesEncryptBtn = document.getElementById('sdesEncryptBtn');
-    
-    sdesEncryptBtn.disabled = true;
-    sdesEncryptBtn.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12a9 9 0 11-6.219-8.56"/>
-        </svg>
-        Encrypting...
-    `;
-    
+function encryptSDES() {
     try {
-        sdesResult = sdes.encrypt(hillResult.encryptedText, sdesKey);
-        currentStep = 3;
+        if (!hillCipherResult) {
+            showNotification('Please complete Hill Cipher encryption first', 'error');
+            return;
+        }
         
-        displaySDESResults();
-        enableSteganographyCard();
+        const sdesKey = getSDESKey();
+        if (!validateSDESKey()) {
+            showNotification('Invalid SDES key. Please ensure all bits are 0 or 1.', 'error');
+            return;
+        }
+        
+        const sdes = new SDES();
+        sdesResult = sdes.encrypt(hillCipherResult.encryptedText, sdesKey);
+        
+        console.log('SDES Result:', sdesResult);
+        
+        // Display result
+        displaySDESResult(sdesResult);
+        
+        // Enable next step
+        enableSteganography();
+        currentStep = 5; // Skip to image upload step
         updateStepIndicator();
-        updateUI();
+        updateProcessFlow('sdes', 'completed');
+        updateProcessFlow('stego', 'active');
+        
+        showNotification('SDES encryption completed successfully!', 'success');
         
     } catch (error) {
-        alert('SDES encryption failed: ' + error.message);
-    } finally {
-        sdesEncryptBtn.disabled = false;
-        sdesEncryptBtn.innerHTML = `
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-            </svg>
-            Encrypt with SDES
-        `;
+        console.error('SDES Error:', error);
+        showNotification(`SDES Error: ${error.message}`, 'error');
     }
 }
 
-async function hideInImage() {
-    if (!sdesResult || !selectedImage) return;
-    
-    const steganographyBtn = document.getElementById('steganographyBtn');
-    steganographyBtn.disabled = true;
-    steganographyBtn.innerHTML = `
-        <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 12a9 9 0 11-6.219-8.56"/>
-        </svg>
-        Hiding Message...
-    `;
-    
+function hideInImage() {
     try {
-        // Get image data URL
-        const reader = new FileReader();
-        const imageDataURL = await new Promise((resolve) => {
-            reader.onload = (e) => resolve(e.target.result);
-            reader.readAsDataURL(selectedImage);
-        });
+        if (!sdesResult || !originalImageData) {
+            showNotification('Please complete SDES encryption and upload an image first', 'error');
+            return;
+        }
         
-        // Convert SDES output blocks to string representation
-        const messageToHide = sdesResult.output.join('');
-        steganographyResult = await lsbSteganography.hideMessage(imageDataURL, messageToHide);
+        const steganography = new LSBSteganography();
+        const binaryMessage = sdesResult.output.join('');
         
-        currentStep = 4;
-        displaySteganographyResults();
-        enableDecryption();
-        updateStepIndicator();
-        updateUI();
+        steganography.hideMessage(originalImageData, binaryMessage)
+            .then(result => {
+                steganographyResult = result;
+                console.log('Steganography Result:', steganographyResult);
+                
+                // Display result
+                displaySteganographyResult(steganographyResult);
+                
+                // Complete process
+                currentStep = 8;
+                updateStepIndicator();
+                updateProcessFlow('stego', 'completed');
+                enableDecryption();
+                
+                showNotification('Message hidden in image successfully!', 'success');
+            })
+            .catch(error => {
+                console.error('Steganography Error:', error);
+                showNotification(`Steganography Error: ${error.message}`, 'error');
+            });
         
     } catch (error) {
-        alert('Steganography failed: ' + error.message);
-    } finally {
-        steganographyBtn.disabled = false;
-        steganographyBtn.innerHTML = `
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
-                <path d="m2 2 20 20"/>
-                <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
-            </svg>
-            Hide Message in Image
-        `;
+        console.error('Steganography Error:', error);
+        showNotification(`Steganography Error: ${error.message}`, 'error');
     }
 }
 
-// Display Functions
-function displayHillResults() {
-    const resultsContent = document.getElementById('resultsContent');
-    resultsContent.innerHTML = `
-        <div class="result-section fade-in">
-            <h4>Your Input Text</h4>
-            <div class="result-content">${hillResult.originalText}</div>
-        </div>
-        
-        <div class="result-section fade-in">
-            <h4>Encrypted Text</h4>
-            <div class="result-content primary">${hillResult.encryptedText}</div>
-        </div>
-        
-        <div class="result-section fade-in">
-            <h4>Binary Representation (8-bit blocks)</h4>
-            <div class="result-content accent scrollable">${hillResult.binaryBlocks.join(' ')}</div>
-        </div>
-        
-        <div class="result-section fade-in">
-            <h4>Key Matrix Used</h4>
-            <div class="result-content">
-                <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; width: fit-content;">
-                    ${hillResult.keyMatrix.flat().map(value => 
-                        `<span class="badge secondary" style="text-align: center; font-family: var(--font-mono);">${value}</span>`
-                    ).join('')}
-                </div>
-            </div>
-        </div>
-    `;
-}
+// ===== UI HELPER FUNCTIONS =====
 
-function displaySDESResults() {
-    const resultsContent = document.getElementById('resultsContent');
-    resultsContent.innerHTML += `
-        <div class="result-section fade-in">
-            <h4>Hill Cipher Input (8-bit blocks)</h4>
-            <div class="result-content primary">${sdesResult.input.join(' ')}</div>
-        </div>
-        
-        <div class="result-section fade-in">
-            <h4>SDES Encrypted Output</h4>
-            <div class="result-content secondary">${sdesResult.output.join(' ')}</div>
-        </div>
-        
-        <div class="result-section fade-in">
-            <h4>Key Schedule</h4>
-            <div class="result-content">
-                <div style="font-size: 0.875rem; line-height: 1.4;">
-                    <div>K1: <code class="result-content accent" style="display: inline; padding: 0.25rem;">${sdesResult.subKeys.k1}</code></div>
-                    <div>K2: <code class="result-content accent" style="display: inline; padding: 0.25rem;">${sdesResult.subKeys.k2}</code></div>
-                </div>
-            </div>
-        </div>
-    `;
-}
-
-function displaySteganographyResults() {
-    // Update stego image
-    const stegoImage = document.getElementById('stegoImage');
-    stegoImage.innerHTML = `<img src="${steganographyResult.stegoImageData}" alt="Steganographic">`;
-    
-    // Update statistics
-    const stats = document.querySelectorAll('.stat-value');
-    stats[0].textContent = steganographyResult.pixelsModified;
-    stats[1].textContent = steganographyResult.capacityUsed.toFixed(1) + '%';
-    stats[2].textContent = steganographyResult.psnr.toFixed(1);
-}
-
-// UI State Functions
-function enableSDESCard() {
+function enableSDES() {
     const sdesCard = document.getElementById('sdesCard');
+    const sdesBtn = document.getElementById('sdesEncryptBtn');
+    const sdesStepNumber = sdesCard.querySelector('.step-number');
+    
     sdesCard.classList.remove('disabled');
-    
-    const stepNumber = sdesCard.querySelector('.step-number');
-    stepNumber.classList.remove('disabled');
-    
-    validateSDESKey();
+    sdesBtn.disabled = false;
+    sdesStepNumber.classList.remove('disabled');
 }
 
-function enableSteganographyCard() {
-    const steganographyCard = document.getElementById('steganographyCard');
-    steganographyCard.classList.remove('disabled');
+function enableSteganography() {
+    const stegoCard = document.getElementById('steganographyCard');
+    const stegoBtn = document.getElementById('steganographyBtn');
+    const stegoStepNumber = stegoCard.querySelector('.step-number');
     
-    const stepNumber = steganographyCard.querySelector('.step-number');
-    stepNumber.classList.remove('disabled');
-    
-    updateImageUploadUI();
+    stegoCard.classList.remove('disabled');
+    if (originalImageData) {
+        stegoBtn.disabled = false;
+    }
+    stegoStepNumber.classList.remove('disabled');
 }
 
 function enableDecryption() {
-    const startDecryptionBtn = document.getElementById('startDecryptionBtn');
-    startDecryptionBtn.disabled = false;
+    const decryptBtn = document.getElementById('decryptBtn');
+    if (decryptBtn) {
+        decryptBtn.disabled = false;
+    }
 }
 
-function updateUI() {
-    // Update plain text input listener
-    const plainText = document.getElementById('plainText');
-    plainText.addEventListener('input', validateMatrix);
-}
-
-// Decryption Functions
-async function startDecryption() {
-    if (!steganographyResult) return;
+function updateProcessFlow(step, status) {
+    const flowSteps = {
+        'hill': document.getElementById('flowStep1'),
+        'sdes': document.getElementById('flowStep2'),
+        'stego': document.getElementById('flowStep3')
+    };
     
-    currentDecryptStep = 5;
-    await executeDecryptStep(5);
-}
-
-async function executeDecryptStep(stepNumber) {
-    const stepElement = document.getElementById(`decrypt-step-${stepNumber}`);
-    const numberElement = document.getElementById(`decrypt-number-${stepNumber}`);
-    const resultElement = document.getElementById(`decrypt-result-${stepNumber}`);
-    
-    // Mark as active
-    numberElement.classList.add('active');
-    resultElement.innerHTML = `
-        <button class="btn btn-primary" disabled>
-            <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M21 12a9 9 0 11-6.219-8.56"/>
-            </svg>
-            Processing...
-        </button>
-    `;
-    
-    try {
-        let result = '';
+    if (flowSteps[step]) {
+        const statusElement = flowSteps[step].querySelector('.flow-status');
+        flowSteps[step].className = `flow-step ${step}-flow ${status}`;
         
-        switch (stepNumber) {
-            case 5: // Extract from image
-                result = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
-                displayDecryptionResult(5, result, 'Extracted Binary Message');
-                setTimeout(() => executeDecryptStep(6), 500);
-                break;
-                
-            case 6: // SDES Decryption
-                const extractedMessage = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
-                const blocks = extractedMessage.match(/.{1,8}/g) || [];
-                result = sdes.decrypt(blocks, sdesResult.key);
-                displayDecryptionResult(6, result, 'After SDES Decryption');
-                setTimeout(() => executeDecryptStep(7), 500);
-                break;
-                
-            case 7: // Hill Decryption
-                const extractedMsg = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
-                const sdesBlocks = extractedMsg.match(/.{1,8}/g) || [];
-                const sdesDecrypted = sdes.decrypt(sdesBlocks, sdesResult.key);
-                result = hillCipher.decrypt(sdesDecrypted, hillResult.keyMatrix, hillResult.originalLength);
-                displayDecryptionResult(7, result, 'After Hill Decryption');
-                setTimeout(() => executeDecryptStep(8), 500);
-                break;
-                
-            case 8: // Final result
-                const finalExtracted = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
-                const finalSdesBlocks = finalExtracted.match(/.{1,8}/g) || [];
-                const finalSdesDecrypted = sdes.decrypt(finalSdesBlocks, sdesResult.key);
-                result = hillCipher.decrypt(finalSdesDecrypted, hillResult.keyMatrix, hillResult.originalLength);
-                displayFinalResult(result);
-                break;
+        const statusTexts = {
+            'ready': 'Ready',
+            'active': 'Processing',
+            'completed': 'Complete',
+            'waiting': 'Waiting'
+        };
+        
+        if (statusElement) {
+            statusElement.textContent = statusTexts[status] || status;
         }
-        
-        // Mark as completed
-        numberElement.classList.remove('active');
-        numberElement.classList.add('completed');
-        
-        currentDecryptStep = stepNumber + 1;
-        
-    } catch (error) {
-        alert(`Decryption step ${stepNumber} failed: ` + error.message);
-        resultElement.innerHTML = `
-            <div class="decrypt-result" style="background-color: hsl(var(--error) / 0.2); color: hsl(var(--error));">
-                Error: ${error.message}
+    }
+}
+
+function displayHillResult(result) {
+    const hillResult = document.getElementById('hillResult');
+    const hillOutput = document.getElementById('hillOutput');
+    const emptyState = document.getElementById('emptyState');
+    
+    if (hillResult && hillOutput) {
+        hillOutput.innerHTML = `
+            <div class="result-section">
+                <strong>Original Text:</strong> ${result.originalText}
+            </div>
+            <div class="result-section">
+                <strong>Processed Text:</strong> ${result.plainText}
+            </div>
+            <div class="result-section">
+                <strong>Encrypted Text:</strong> ${result.encryptedText}
+            </div>
+            <div class="result-section">
+                <strong>Binary Blocks:</strong><br>
+                <div class="binary-display">${result.binaryBlocks.join(' ')}</div>
             </div>
         `;
+        
+        hillResult.style.display = 'block';
+        if (emptyState) emptyState.style.display = 'none';
     }
 }
 
-function displayDecryptionResult(stepNumber, result, title) {
-    const resultElement = document.getElementById(`decrypt-result-${stepNumber}`);
-    resultElement.innerHTML = `
-        <div class="decrypt-result completed">
-            Data Ready
-        </div>
-    `;
+function displaySDESResult(result) {
+    const sdesResult = document.getElementById('sdesResult');
+    const sdesOutput = document.getElementById('sdesOutput');
     
-    // Add to decryption results section
-    const decryptionResults = document.getElementById('decryptionResults');
-    if (!decryptionResults.style.display || decryptionResults.style.display === 'none') {
-        decryptionResults.style.display = 'block';
-        decryptionResults.innerHTML = '<h4>Decryption Results</h4>';
+    if (sdesResult && sdesOutput) {
+        sdesOutput.innerHTML = `
+            <div class="result-section">
+                <strong>Input Blocks:</strong><br>
+                <div class="binary-display">${result.input.join(' ')}</div>
+            </div>
+            <div class="result-section">
+                <strong>SDES Key:</strong> ${result.key}
+            </div>
+            <div class="result-section">
+                <strong>Subkeys:</strong> K1: ${result.subKeys.k1}, K2: ${result.subKeys.k2}
+            </div>
+            <div class="result-section">
+                <strong>Encrypted Blocks:</strong><br>
+                <div class="binary-display">${result.output.join(' ')}</div>
+            </div>
+        `;
+        
+        sdesResult.style.display = 'block';
+    }
+}
+
+function displaySteganographyResult(result) {
+    const stegoResult = document.getElementById('stegoResult');
+    const stegoPreview = document.getElementById('stegoPreview');
+    
+    if (stegoResult && stegoPreview) {
+        stegoPreview.innerHTML = `
+            <div class="result-section">
+                <strong>Image Information:</strong><br>
+                Size: ${result.imageSize.width} × ${result.imageSize.height}<br>
+                Capacity: ${result.capacity} bits<br>
+                Used: ${result.used} bits (${((result.used / result.capacity) * 100).toFixed(2)}%)
+            </div>
+            <div class="result-section">
+                <strong>Quality Metrics:</strong><br>
+                PSNR: ${result.psnr.toFixed(2)} dB
+            </div>
+            <div class="result-section">
+                <strong>Stego Image:</strong><br>
+                <img src="${result.stegoImage}" style="max-width: 100%; height: auto; border-radius: 8px; margin-top: 0.5rem;" alt="Steganographic Image">
+            </div>
+            <div class="result-section">
+                <a href="${result.stegoImage}" download="stego_image.png" class="btn btn-outline" style="margin-top: 1rem;">
+                    Download Stego Image
+                </a>
+            </div>
+        `;
+        
+        stegoResult.style.display = 'block';
+    }
+}
+
+function handleFileSelect(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+        showNotification('Please select a valid image file', 'error');
+        return;
     }
     
-    const resultDiv = document.createElement('div');
-    resultDiv.className = 'result-section fade-in';
-    resultDiv.innerHTML = `
-        <h4 style="font-size: 0.875rem;">${title}</h4>
-        <div class="result-content scrollable" style="max-height: 5rem; font-size: 0.875rem;">
-            ${stepNumber === 5 ? result.slice(0, 200) + (result.length > 200 ? '...' : '') : result}
+    // Validate file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+        showNotification('File size must be less than 10MB', 'error');
+        return;
+    }
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        originalImageData = e.target.result;
+        
+        // Update drop zone to show preview
+        const dropZoneContent = document.getElementById('dropZoneContent');
+        if (dropZoneContent) {
+            dropZoneContent.innerHTML = `
+                <img src="${originalImageData}" style="max-height: 150px; border-radius: 8px;">
+                <p>Image loaded successfully</p>
+                <button type="button" class="btn btn-outline glow-effect">Change Image</button>
+                <small>${file.name} (${(file.size / 1024 / 1024).toFixed(2)} MB)</small>
+            `;
+        }
+        
+        // Enable steganography button if SDES is complete
+        if (sdesResult) {
+            const stegoBtn = document.getElementById('steganographyBtn');
+            if (stegoBtn) stegoBtn.disabled = false;
+        }
+        
+        showNotification('Image uploaded successfully!', 'success');
+    };
+    
+    reader.readAsDataURL(file);
+}
+
+// ===== DECRYPTION FUNCTIONS =====
+
+function startDecryption() {
+    try {
+        if (!steganographyResult || !hillCipherResult || !sdesResult) {
+            showNotification('Please complete the full encryption process first', 'error');
+            return;
+        }
+        
+        // Step 1: Extract message from image
+        const steganography = new LSBSteganography();
+        steganography.extractMessage(steganographyResult.stegoImage)
+            .then(extractedBinary => {
+                console.log('Extracted binary:', extractedBinary);
+                
+                // Step 2: Convert binary to blocks for SDES decryption
+                const binaryBlocks = extractedBinary.match(/.{1,8}/g) || [];
+                console.log('Binary blocks for SDES:', binaryBlocks);
+                
+                // Step 3: Decrypt with SDES
+                const sdes = new SDES();
+                const sdesDecrypted = sdes.decrypt(binaryBlocks, sdesResult.key);
+                console.log('SDES decrypted:', sdesDecrypted);
+                
+                // Step 4: Decrypt with Hill Cipher
+                const hillCipher = new HillCipher();
+                const finalDecrypted = hillCipher.decrypt(
+                    sdesDecrypted,
+                    hillCipherResult.keyMatrix,
+                    hillCipherResult.originalLength
+                );
+                console.log('Final decrypted:', finalDecrypted);
+                
+                // Display result
+                displayDecryptionResult(finalDecrypted);
+                
+                showNotification('Decryption completed successfully!', 'success');
+                
+            })
+            .catch(error => {
+                console.error('Decryption Error:', error);
+                showNotification(`Decryption Error: ${error.message}`, 'error');
+            });
+        
+    } catch (error) {
+        console.error('Decryption Error:', error);
+        showNotification(`Decryption Error: ${error.message}`, 'error');
+    }
+}
+
+function displayDecryptionResult(decryptedText) {
+    const decryptResults = document.getElementById('decryptResults');
+    const decryptOutput = document.getElementById('decryptOutput');
+    
+    if (decryptResults && decryptOutput) {
+        decryptOutput.innerHTML = `
+            <div class="result-section">
+                <strong>Decrypted Message:</strong><br>
+                <div style="font-size: 1.1rem; margin-top: 0.5rem; padding: 1rem; background: rgba(255, 217, 61, 0.2); border-radius: 8px; border: 1px solid var(--decrypt-primary);">
+                    ${decryptedText}
+                </div>
+            </div>
+        `;
+        
+        decryptResults.style.display = 'block';
+    }
+}
+
+// ===== UTILITY FUNCTIONS =====
+
+function showNotification(message, type = 'info') {
+    // Create notification element
+    const notification = document.createElement('div');
+    notification.className = `notification ${type}`;
+    notification.innerHTML = `
+        <div class="notification-content">
+            <span class="notification-message">${message}</span>
+            <button class="notification-close" onclick="this.parentElement.parentElement.remove()">×</button>
         </div>
     `;
     
-    decryptionResults.appendChild(resultDiv);
-}
-
-function displayFinalResult(result) {
-    const resultElement = document.getElementById(`decrypt-result-8`);
-    resultElement.innerHTML = `
-        <div class="final-result">
-            <h4>Final Plaintext</h4>
-            <p>${result}</p>
-        </div>
-    `;
+    // Add styles if not already present
+    if (!document.querySelector('#notification-styles')) {
+        const style = document.createElement('style');
+        style.id = 'notification-styles';
+        style.textContent = `
+            .notification {
+                position: fixed;
+                top: 2rem;
+                right: 2rem;
+                max-width: 400px;
+                padding: 1rem;
+                border-radius: 8px;
+                background: var(--card-bg);
+                border: 1px solid var(--card-border);
+                backdrop-filter: blur(20px);
+                box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+                z-index: 1000;
+                animation: slideInNotification 0.3s ease-out;
+            }
+            
+            .notification.success {
+                border-color: var(--stego-primary);
+                background: rgba(79, 255, 176, 0.1);
+            }
+            
+            .notification.error {
+                border-color: #ff6b6b;
+                background: rgba(255, 107, 107, 0.1);
+            }
+            
+            .notification-content {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 1rem;
+            }
+            
+            .notification-message {
+                color: var(--text-primary);
+                font-size: 0.9rem;
+            }
+            
+            .notification-close {
+                background: none;
+                border: none;
+                color: var(--text-secondary);
+                font-size: 1.2rem;
+                cursor: pointer;
+                padding: 0;
+                width: 1.5rem;
+                height: 1.5rem;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                transition: all 0.2s ease;
+            }
+            
+            .notification-close:hover {
+                background: rgba(255, 255, 255, 0.1);
+                color: var(--text-primary);
+            }
+            
+            @keyframes slideInNotification {
+                from {
+                    transform: translateX(100%);
+                    opacity: 0;
+                }
+                to {
+                    transform: translateX(0);
+                    opacity: 1;
+                }
+            }
+        `;
+        document.head.appendChild(style);
+    }
     
-    // Update step indicator to show completion
-    currentStep = 8;
-    updateStepIndicator();
+    // Add to page
+    document.body.appendChild(notification);
+    
+    // Auto-remove after 5 seconds
+    setTimeout(() => {
+        if (notification.parentElement) {
+            notification.remove();
+        }
+    }, 5000);
 }
 
-// Export Function
 function exportResults() {
-    const results = {
+    if (!hillCipherResult && !sdesResult && !steganographyResult) {
+        showNotification('No results to export. Please complete the encryption process first.', 'error');
+        return;
+    }
+    
+    const exportData = {
         timestamp: new Date().toISOString(),
-        hillCipher: hillResult,
+        hillCipher: hillCipherResult,
         sdes: sdesResult,
         steganography: steganographyResult ? {
-            pixelsModified: steganographyResult.pixelsModified,
-            capacityUsed: steganographyResult.capacityUsed,
-            psnr: steganographyResult.psnr
+            ...steganographyResult,
+            stegoImage: '[Base64 Image Data]' // Placeholder to reduce file size
         } : null
     };
     
-    const dataStr = JSON.stringify(results, null, 2);
-    const dataBlob = new Blob([dataStr], {type: 'application/json'});
+    const dataStr = JSON.stringify(exportData, null, 2);
+    const dataBlob = new Blob([dataStr], { type: 'application/json' });
     
     const link = document.createElement('a');
     link.href = URL.createObjectURL(dataBlob);
     link.download = `hybrid-crypto-results-${Date.now()}.json`;
     link.click();
+    
+    showNotification('Results exported successfully!', 'success');
 }
+
+// Text area auto-resize and validation
+document.addEventListener('input', function(e) {
+    if (e.target.id === 'plainText') {
+        const hillBtn = document.getElementById('hillEncryptBtn');
+        if (hillBtn) {
+            const hasText = e.target.value.trim().length > 0;
+            const isMatrixValid = validateMatrix();
+            hillBtn.disabled = !hasText || !isMatrixValid;
+        }
+    }
+});
+
+// Add visual feedback for input focus
+document.addEventListener('focus', function(e) {
+    if (e.target.classList.contains('glow-input')) {
+        e.target.parentElement.classList.add('input-focused');
+    }
+}, true);
+
+document.addEventListener('blur', function(e) {
+    if (e.target.classList.contains('glow-input')) {
+        e.target.parentElement.classList.remove('input-focused');
+    }
+}, true);
