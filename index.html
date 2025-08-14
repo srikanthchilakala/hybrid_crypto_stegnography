@@ -14,7 +14,7 @@
     <meta property="og:type" content="website">
     
     <!-- Favicon -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23FF6B6B' stroke-width='2'%3e%3cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3e%3c/svg%3e">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23339AF0' stroke-width='2'%3e%3cpath d='M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z'/%3e%3c/svg%3e">
     
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -263,40 +263,49 @@
                         </div>
                         <div class="card-content">
                             <div class="results-container" id="resultsContainer">
-                                <div class="result-item hill-result" id="hillResult" style="display: none;">
-                                    <div class="result-header">
-                                        <span class="result-title">Hill Cipher Output</span>
-                                        <span class="badge success animated-badge">Encrypted</span>
-                                    </div>
+                                <div class="result-item" style="display: none;" id="hillResult">
+                                    <h4 class="hill-text">Hill Cipher Result</h4>
                                     <div class="result-content">
-                                        <div class="result-box" id="hillOutput"></div>
+                                        <p><strong>Original:</strong> <span id="hillOriginal">-</span></p>
+                                        <p><strong>Encrypted:</strong> <span id="hillEncrypted" class="mono">-</span></p>
+                                        <p><strong>Binary Blocks:</strong> <span id="hillBinary" class="mono">-</span></p>
                                     </div>
                                 </div>
 
-                                <div class="result-item sdes-result" id="sdesResult" style="display: none;">
-                                    <div class="result-header">
-                                        <span class="result-title">SDES Output</span>
-                                        <span class="badge success animated-badge">Encrypted</span>
-                                    </div>
+                                <div class="result-item" style="display: none;" id="sdesResult">
+                                    <h4 class="sdes-text">SDES Result</h4>
                                     <div class="result-content">
-                                        <div class="result-box" id="sdesOutput"></div>
+                                        <p><strong>Input Blocks:</strong> <span id="sdesInput" class="mono">-</span></p>
+                                        <p><strong>Encrypted Blocks:</strong> <span id="sdesOutput" class="mono">-</span></p>
+                                        <p><strong>Key:</strong> <span id="sdesKeyUsed" class="mono">-</span></p>
                                     </div>
                                 </div>
 
-                                <div class="result-item stego-result" id="stegoResult" style="display: none;">
-                                    <div class="result-header">
-                                        <span class="result-title">Steganography Output</span>
-                                        <span class="badge success animated-badge">Hidden</span>
-                                    </div>
+                                <div class="result-item" style="display: none;" id="stegoResult">
+                                    <h4 class="stego-text">Steganography Result</h4>
                                     <div class="result-content">
-                                        <div class="stego-preview" id="stegoPreview"></div>
+                                        <p><strong>Message Hidden:</strong> <span id="stegoMessage" class="mono">-</span></p>
+                                        <p><strong>Image Size:</strong> <span id="stegoSize">-</span></p>
+                                        <p><strong>Capacity Used:</strong> <span id="stegoCapacity">-</span></p>
+                                        <p><strong>PSNR:</strong> <span id="stegoPSNR">-</span> dB</p>
+                                        <div class="image-comparison" id="imageComparison" style="display: none;">
+                                            <div class="image-pair">
+                                                <div>
+                                                    <h5>Original Image</h5>
+                                                    <img id="originalImg" alt="Original" style="max-width: 200px; border-radius: 8px;">
+                                                </div>
+                                                <div>
+                                                    <h5>Stego Image</h5>
+                                                    <img id="stegoImg" alt="Stego" style="max-width: 200px; border-radius: 8px;">
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
 
-                                <div class="empty-state" id="emptyState">
-                                    <div class="empty-icon">🔮</div>
-                                    <h4>Ready to Encrypt</h4>
-                                    <p>Start by entering a message and clicking "Encrypt with Hill Cipher"</p>
+                                <div class="placeholder-message" id="placeholderMessage">
+                                    <div class="placeholder-icon">🔒</div>
+                                    <p>Results will appear here as you complete each encryption step</p>
                                 </div>
                             </div>
                         </div>
@@ -310,17 +319,51 @@
                             <div class="theme-indicator decrypt-indicator"></div>
                         </div>
                         <div class="card-content">
-                            <div class="decrypt-controls">
-                                <button class="btn btn-secondary full-width glow-effect" onclick="startDecryption()" id="decryptBtn" disabled>
+                            <div class="decrypt-options">
+                                <div class="form-group">
+                                    <label>Stego Image for Decryption</label>
+                                    <div class="file-drop-zone decrypt-drop" id="decryptDropZone">
+                                        <div class="drop-zone-content" id="decryptDropContent">
+                                            <svg class="icon large" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                                <polyline points="14,2 14,8 20,8"/>
+                                                <line x1="16" x2="8" y1="13" y2="13"/>
+                                                <line x1="16" x2="8" y1="17" y2="17"/>
+                                                <polyline points="10,9 9,9 8,9"/>
+                                            </svg>
+                                            <p>Drop stego image to decrypt</p>
+                                            <button type="button" class="btn btn-outline glow-effect">Choose File</button>
+                                        </div>
+                                    </div>
+                                    <input type="file" id="decryptImageInput" accept="image/*" style="display: none;">
+                                </div>
+
+                                <button class="btn btn-secondary full-width glow-effect decrypt-btn" onclick="startFullDecryption()" id="decryptBtn" disabled>
                                     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                                         <rect width="18" height="11" x="3" y="11" rx="2" ry="2"/>
-                                        <path d="m7 11V7a5 5 0 0 1 10 0v4"/>
+                                        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                                     </svg>
-                                    Start Decryption
+                                    Start Full Decryption
                                 </button>
-                            </div>
-                            <div class="decrypt-results" id="decryptResults" style="display: none;">
-                                <div class="result-box decrypt-output" id="decryptOutput"></div>
+
+                                <div class="decrypt-result" id="decryptResult" style="display: none;">
+                                    <h4>Decrypted Message</h4>
+                                    <div class="decrypt-message" id="decryptedMessage">-</div>
+                                    <div class="decrypt-steps" id="decryptSteps">
+                                        <div class="decrypt-step-item">
+                                            <span class="step-label">Steganography:</span>
+                                            <span class="step-value" id="extractedBinary">-</span>
+                                        </div>
+                                        <div class="decrypt-step-item">
+                                            <span class="step-label">SDES Decryption:</span>
+                                            <span class="step-value" id="sdesDecrypted">-</span>
+                                        </div>
+                                        <div class="decrypt-step-item">
+                                            <span class="step-label">Hill Cipher:</span>
+                                            <span class="step-value" id="hillDecrypted">-</span>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -333,18 +376,17 @@
     <footer class="footer">
         <div class="container">
             <div class="footer-content">
-                <div class="footer-info">
-                    <p>&copy; 2024 Hybrid Cryptographic System. Educational purposes only.</p>
-                </div>
+                <p>&copy; 2024 Hybrid Cryptographic System. Educational use only.</p>
                 <div class="footer-links">
-                    <a href="#" class="footer-link">Documentation</a>
                     <a href="#" class="footer-link">About</a>
-                    <a href="#" class="footer-link">Privacy</a>
+                    <a href="#" class="footer-link">Documentation</a>
+                    <a href="#" class="footer-link">GitHub</a>
                 </div>
             </div>
         </div>
     </footer>
 
+    <!-- Scripts -->
     <script src="script.js"></script>
 </body>
 </html>
