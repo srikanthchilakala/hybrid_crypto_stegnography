@@ -107,6 +107,10 @@ class HillCipher {
             throw new Error('Invalid key matrix: determinant must be coprime with 26');
         }
         
+        // Store original length for proper decryption
+        const originalText = plainText.replace(/[^A-Za-z]/g, '').toUpperCase();
+        const originalLength = originalText.length;
+        
         const processedText = this.preprocessText(plainText);
         let encryptedText = '';
         
@@ -126,16 +130,20 @@ class HillCipher {
         
         return {
             plainText: processedText,
+            originalText: originalText,
+            originalLength: originalLength,
             encryptedText,
             keyMatrix,
             binaryBlocks
         };
     }
     
-    decrypt(encryptedText, keyMatrix) {
+    decrypt(encryptedText, keyMatrix, originalLength = null) {
         if (!validateMatrix2x2(keyMatrix, this.ALPHABET_SIZE)) {
             throw new Error('Invalid key matrix: determinant must be coprime with 26');
         }
+        
+        console.log('Hill Decrypt - Input:', encryptedText, 'Original Length:', originalLength);
         
         const inverseMatrix = matrixInverse2x2(keyMatrix, this.ALPHABET_SIZE);
         let decryptedText = '';
@@ -150,6 +158,15 @@ class HillCipher {
             const decrypted2 = mod(inverseMatrix[1][0] * char1 + inverseMatrix[1][1] * char2, this.ALPHABET_SIZE);
             
             decryptedText += this.numToChar(decrypted1) + this.numToChar(decrypted2);
+        }
+        
+        console.log('Hill Decrypt - Before padding removal:', decryptedText);
+        
+        // Remove padding if original length is provided
+        if (originalLength !== null && originalLength > 0 && originalLength < decryptedText.length) {
+            // Remove trailing padding to match original length
+            decryptedText = decryptedText.substring(0, originalLength);
+            console.log('Hill Decrypt - After padding removal:', decryptedText);
         }
         
         return decryptedText;
@@ -854,8 +871,8 @@ function displayHillResults() {
     const resultsContent = document.getElementById('resultsContent');
     resultsContent.innerHTML = `
         <div class="result-section fade-in">
-            <h4>Original Text</h4>
-            <div class="result-content">${hillResult.plainText}</div>
+            <h4>Your Input Text</h4>
+            <div class="result-content">${hillResult.originalText}</div>
         </div>
         
         <div class="result-section fade-in">
@@ -873,7 +890,7 @@ function displayHillResults() {
             <div class="result-content">
                 <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; width: fit-content;">
                     ${hillResult.keyMatrix.flat().map(value => 
-                        `<span class="badge secondary" style="text-align: center;">${value}</span>`
+                        `<span class="badge secondary" style="text-align: center; font-family: var(--font-mono);">${value}</span>`
                     ).join('')}
                 </div>
             </div>
@@ -996,7 +1013,7 @@ async function executeDecryptStep(stepNumber) {
                 const extractedMsg = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
                 const sdesBlocks = extractedMsg.match(/.{1,8}/g) || [];
                 const sdesDecrypted = sdes.decrypt(sdesBlocks, sdesResult.key);
-                result = hillCipher.decrypt(sdesDecrypted, hillResult.keyMatrix);
+                result = hillCipher.decrypt(sdesDecrypted, hillResult.keyMatrix, hillResult.originalLength);
                 displayDecryptionResult(7, result, 'After Hill Decryption');
                 setTimeout(() => executeDecryptStep(8), 500);
                 break;
@@ -1005,7 +1022,7 @@ async function executeDecryptStep(stepNumber) {
                 const finalExtracted = await lsbSteganography.extractMessage(steganographyResult.stegoImageData);
                 const finalSdesBlocks = finalExtracted.match(/.{1,8}/g) || [];
                 const finalSdesDecrypted = sdes.decrypt(finalSdesBlocks, sdesResult.key);
-                result = hillCipher.decrypt(finalSdesDecrypted, hillResult.keyMatrix);
+                result = hillCipher.decrypt(finalSdesDecrypted, hillResult.keyMatrix, hillResult.originalLength);
                 displayFinalResult(result);
                 break;
         }
